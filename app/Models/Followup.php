@@ -17,6 +17,8 @@ class Followup extends Model
         'next_followup_date',
         'next_followup_datetime',  // ← new
         'reminder_sent',           // ← new
+        'reminder_ready_at',
+        'reminder_acknowledged_at',
         'status',
     ];
 
@@ -26,6 +28,8 @@ class Followup extends Model
             'next_followup_date'     => 'date',
             'next_followup_datetime' => 'datetime',  // ← new
             'reminder_sent'          => 'boolean',   // ← new
+            'reminder_ready_at' => 'datetime',
+            'reminder_acknowledged_at' => 'datetime',
         ];
     }
 

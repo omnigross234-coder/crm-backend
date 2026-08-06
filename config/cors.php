@@ -8,6 +8,8 @@ return [
     'allowed_origins' => [
         'http://localhost:3000',
         'http://127.0.0.1:3000',
+        'https://darkgray-raven-108886.hostingersite.com',
+        'https://crm.narayanikitchen.in',
     ],
 
     'allowed_origins_patterns' => [],

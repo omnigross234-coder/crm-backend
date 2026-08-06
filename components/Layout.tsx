@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, ReactNode } from "react";
-import { FaChartLine, FaChartPie, FaListAlt, FaShieldAlt, FaUsers, FaCloudDownloadAlt } from "react-icons/fa";
+import { FaChartLine, FaChartPie, FaCommentAlt, FaListAlt, FaShieldAlt, FaUsers, FaCloudDownloadAlt } from "react-icons/fa";
 import type { IconType } from "react-icons";
 import BrandLogo from "@/components/BrandLogo";
 import { useAuth } from "@/lib/auth";
@@ -16,6 +16,7 @@ const navItems: { href: string; label: string; icon: IconType }[] = [
 const adminItems: { href: string; label: string; icon: IconType }[] = [
   { href: "/admin/users",       label: "Users",       icon: FaShieldAlt },
   { href: "/admin/lead-fields",  label: "Lead Fields", icon: FaListAlt },
+  { href: "/admin/sms-settings", label: "SMS Settings", icon: FaCommentAlt },
   { href: "/admin/backups",      label: "Backups",     icon: FaCloudDownloadAlt },
   { href: "/performance",       label: "Performance", icon: FaChartLine },
 ];

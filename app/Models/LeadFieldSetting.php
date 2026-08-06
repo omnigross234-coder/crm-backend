@@ -2,11 +2,15 @@
 
 namespace App\Models;
 
+use App\Models\Concerns\BelongsToClient;
 use Illuminate\Database\Eloquent\Model;
 
 class LeadFieldSetting extends Model
 {
+    use BelongsToClient;
+
     protected $fillable = [
+        'client_id',
         'field_key',
         'label',
         'field_type',
@@ -19,6 +23,7 @@ class LeadFieldSetting extends Model
     protected function casts(): array
     {
         return [
+            'client_id' => 'integer',
             'active' => 'boolean',
             'required' => 'boolean',
             'is_custom' => 'boolean',

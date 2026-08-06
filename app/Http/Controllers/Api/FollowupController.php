@@ -84,7 +84,7 @@ class FollowupController extends Controller
     private function findLead(Request $request, int $leadId): ?Lead
     {
         $query = Lead::query();
-        if ($request->user()->role !== 'admin') {
+        if (! in_array($request->user()->role, ['admin', 'client_admin'], true)) {
             $query->where('assigned_to', $request->user()->id);
         }
         return $query->find($leadId);

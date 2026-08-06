@@ -4,147 +4,184 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Models\LeadFieldSetting;
-use Illuminate\Database\Schema\Blueprint;
-use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Schema;
+use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Str;
 use Illuminate\Validation\Rule;
 
 class LeadFieldSettingController extends Controller
 {
-    private const FIELD_KEYS = [
-        'address',
-        'city',
-        'state',
-        'country',
-        'pin_code',
-        'referral_name',
-        'industry_type',
-        'business_type',
-        'product_service_interested_in',
-        'budget',
-        'documents',
-        'annual_turnover',
-        'gst_number',
-        'requirement',
+    private const DEFAULT_FIELDS = [
+        ['field_key' => 'call_notes', 'label' => 'Call Notes', 'field_type' => 'feature', 'active' => true, 'required' => false, 'is_custom' => false, 'sort_order' => 1],
+        ['field_key' => 'followup_notes', 'label' => 'Follow-up Notes', 'field_type' => 'feature', 'active' => true, 'required' => false, 'is_custom' => false, 'sort_order' => 2],
+        ['field_key' => 'company', 'label' => 'Company', 'field_type' => 'text', 'active' => true, 'required' => false, 'is_custom' => false, 'sort_order' => 5],
+        ['field_key' => 'address', 'label' => 'Address', 'field_type' => 'textarea', 'active' => true, 'required' => false, 'is_custom' => false, 'sort_order' => 10],
+        ['field_key' => 'city', 'label' => 'City', 'field_type' => 'text', 'active' => true, 'required' => false, 'is_custom' => false, 'sort_order' => 20],
+        ['field_key' => 'state', 'label' => 'State', 'field_type' => 'text', 'active' => true, 'required' => false, 'is_custom' => false, 'sort_order' => 30],
+        ['field_key' => 'country', 'label' => 'Country', 'field_type' => 'text', 'active' => true, 'required' => false, 'is_custom' => false, 'sort_order' => 40],
+        ['field_key' => 'pin_code', 'label' => 'PIN Code', 'field_type' => 'text', 'active' => true, 'required' => false, 'is_custom' => false, 'sort_order' => 50],
+        ['field_key' => 'referral_name', 'label' => 'Referral Name', 'field_type' => 'text', 'active' => true, 'required' => false, 'is_custom' => false, 'sort_order' => 60],
+        ['field_key' => 'industry_type', 'label' => 'Industry Type', 'field_type' => 'text', 'active' => true, 'required' => false, 'is_custom' => false, 'sort_order' => 70],
+        ['field_key' => 'business_type', 'label' => 'Business Type', 'field_type' => 'text', 'active' => true, 'required' => false, 'is_custom' => false, 'sort_order' => 80],
+        ['field_key' => 'product_service_interested_in', 'label' => 'Product/Service Interested In', 'field_type' => 'text', 'active' => true, 'required' => false, 'is_custom' => false, 'sort_order' => 90],
+        ['field_key' => 'budget', 'label' => 'Budget', 'field_type' => 'text', 'active' => true, 'required' => false, 'is_custom' => false, 'sort_order' => 100],
+        ['field_key' => 'documents', 'label' => 'Documents', 'field_type' => 'textarea', 'active' => true, 'required' => false, 'is_custom' => false, 'sort_order' => 110],
+        ['field_key' => 'annual_turnover', 'label' => 'Annual Turnover', 'field_type' => 'text', 'active' => true, 'required' => false, 'is_custom' => false, 'sort_order' => 120],
+        ['field_key' => 'gst_number', 'label' => 'GST Number', 'field_type' => 'text', 'active' => true, 'required' => false, 'is_custom' => false, 'sort_order' => 130],
+        ['field_key' => 'requirement', 'label' => 'Requirement', 'field_type' => 'textarea', 'active' => true, 'required' => false, 'is_custom' => false, 'sort_order' => 140],
     ];
 
-    public function index(): JsonResponse
+    // GET /api/lead-field-settings
+    public function index(Request $request)
     {
-        return response()->json([
-            'success' => true,
-            'message' => 'Lead field settings retrieved.',
-            'data' => LeadFieldSetting::orderBy('sort_order')->get(),
-        ]);
-    }
+        $clientId = $this->clientId($request);
 
-    public function update(Request $request): JsonResponse
-    {
-        $fieldKeys = LeadFieldSetting::pluck('field_key')->all();
-        $validated = $request->validate([
-            'fields' => ['required', 'array'],
-            'fields.*.key' => ['required', Rule::in($fieldKeys)],
-            'fields.*.active' => ['required', 'boolean'],
-            'fields.*.required' => ['required', 'boolean'],
-        ]);
-
-        foreach ($validated['fields'] as $field) {
-            LeadFieldSetting::where('field_key', $field['key'])->update([
-                'active' => $field['active'],
-                'required' => $field['active'] ? $field['required'] : false,
-            ]);
+        foreach (self::DEFAULT_FIELDS as $field) {
+            LeadFieldSetting::firstOrCreate(
+                ['client_id' => $clientId, 'field_key' => $field['field_key']],
+                $field,
+            );
         }
 
-        return $this->index();
+        $settings = $this->formatSettings(
+            LeadFieldSetting::where('client_id', $clientId)->orderBy('sort_order')->get()
+        );
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Lead field settings fetched successfully.',
+            'data' => $settings,
+        ]);
     }
 
-    public function store(Request $request): JsonResponse
+    // PUT /api/lead-field-settings
+    public function update(Request $request)
     {
-        $validated = $request->validate([
-            'label' => ['required', 'string', 'max:80'],
-           'field_type' => ['required', Rule::in(['text', 'textarea', 'number'])],
-            'required' => ['nullable', 'boolean'],
-        ]);
+        $items = $request->input('fields', []);
 
-        $fieldKey = $this->makeFieldKey($validated['label']);
-
-        if (LeadFieldSetting::where('field_key', $fieldKey)->exists()) {
+        if (! is_array($items) || empty($items)) {
             return response()->json([
                 'success' => false,
-                'message' => 'A field with this name already exists.',
-                'data' => null,
+                'message' => 'Fields array is required.',
             ], 422);
         }
 
-        Schema::table('leads', function (Blueprint $table) use ($fieldKey, $validated) {
-    if ($validated['field_type'] === 'textarea') {
-        $table->text($fieldKey)->nullable();
-    } elseif ($validated['field_type'] === 'number') {
-        $table->decimal($fieldKey, 15, 2)->nullable();
-    } else {
-        $table->string($fieldKey)->nullable();
-    }
-});
-        LeadFieldSetting::create([
-            'field_key' => $fieldKey,
-            'label' => $validated['label'],
-            'field_type' => $validated['field_type'],
-            'active' => true,
-            'required' => (bool) ($validated['required'] ?? false),
-            'is_custom' => true,
-            'sort_order' => ((int) LeadFieldSetting::max('sort_order')) + 10,
+        $validator = Validator::make(['items' => $items], [
+            'items' => ['required', 'array'],
+            'items.*.key' => ['required', 'string'],
+            'items.*.active' => ['required', 'boolean'],
+            'items.*.required' => ['required', 'boolean'],
         ]);
 
-        return $this->index();
-    }
-
-    public function destroy(string $fieldKey): JsonResponse
-    {
-        $setting = LeadFieldSetting::where('field_key', $fieldKey)->first();
-
-        if (! $setting) {
+        if ($validator->fails()) {
             return response()->json([
                 'success' => false,
-                'message' => 'Field not found.',
-                'data' => null,
-            ], 404);
+                'message' => 'Validation failed.',
+                'data' => $validator->errors(),
+            ], 422);
         }
 
-        if (Schema::hasColumn('leads', $setting->field_key)) {
-            Schema::table('leads', function (Blueprint $table) use ($setting) {
-                $table->dropColumn($setting->field_key);
-            });
+        $clientId = $this->clientId($request);
+
+        foreach ($items as $item) {
+            LeadFieldSetting::where('client_id', $clientId)
+                ->where('field_key', $item['key'])
+                ->update([
+                    'active' => $item['active'],
+                    'required' => $item['active'] ? $item['required'] : false,
+                ]);
         }
 
-        $setting->delete();
+        $settings = $this->formatSettings(
+            LeadFieldSetting::where('client_id', $clientId)->orderBy('sort_order')->get()
+        );
 
-        return $this->index();
+        return response()->json([
+            'success' => true,
+            'message' => 'Lead field settings updated successfully.',
+            'data' => $settings,
+        ]);
     }
 
-    private function makeFieldKey(string $label): string
+    // POST /api/lead-field-settings
+    public function store(Request $request)
     {
-        $base = Str::of($label)
-            ->ascii()
-            ->lower()
-            ->replaceMatches('/[^a-z0-9]+/', '_')
-            ->trim('_')
-            ->limit(45, '')
-            ->toString();
+        $clientId = $this->clientId($request);
 
-        if ($base === '') {
-            $base = 'field';
+        $data = $request->validate([
+            'label' => ['required', 'string', 'max:100'],
+            'type' => ['required', Rule::in(['text', 'textarea', 'number'])],
+            'required' => ['required', 'boolean'],
+        ]);
+
+        $baseKey = Str::slug($data['label'], '_');
+        $key = $baseKey;
+        $suffix = 1;
+        while (
+            LeadFieldSetting::where('client_id', $clientId)
+                ->where('field_key', $key)
+                ->exists()
+        ) {
+            $key = $baseKey . '_' . (++$suffix);
         }
 
-        $key = 'custom_'.$base;
-        $candidate = $key;
-        $counter = 2;
+        $maxSort = LeadFieldSetting::where('client_id', $clientId)->max('sort_order') ?? 0;
 
-        while (Schema::hasColumn('leads', $candidate) || LeadFieldSetting::where('field_key', $candidate)->exists()) {
-            $candidate = $key.'_'.$counter;
-            $counter++;
-        }
+        LeadFieldSetting::create([
+            'client_id' => $clientId,
+            'field_key' => $key,
+            'label' => $data['label'],
+            'field_type' => $data['type'],
+            'active' => true,
+            'required' => $data['required'],
+            'is_custom' => true,
+            'sort_order' => $maxSort + 1,
+        ]);
 
-        return $candidate;
+        $settings = $this->formatSettings(
+            LeadFieldSetting::where('client_id', $clientId)->orderBy('sort_order')->get()
+        );
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Custom field created successfully.',
+            'data' => $settings,
+        ]);
+    }
+
+    // DELETE /api/lead-field-settings/{leadFieldSetting}
+    public function destroy(Request $request, LeadFieldSetting $leadFieldSetting)
+    {
+        abort_if($leadFieldSetting->client_id !== $request->user()->client_id, 403);
+        abort_unless($leadFieldSetting->is_custom, 422, 'Only custom fields can be deleted.');
+
+        $leadFieldSetting->delete();
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Custom field deleted successfully.',
+        ]);
+    }
+
+    // Maps DB column names to the shape the frontend expects (key, type, label, active, required)
+    private function formatSettings($settings)
+    {
+        return $settings->map(fn ($s) => [
+            'key' => $s->field_key,
+            'label' => $s->label,
+            'type' => $s->field_type,
+            'active' => $s->active,
+            'required' => $s->required,
+            'is_custom' => $s->is_custom,
+        ]);
+    }
+
+    private function clientId(Request $request): int
+    {
+        $clientId = $request->user()?->client_id;
+
+        abort_if(! $clientId, 403, 'A client account is required to manage lead fields.');
+
+        return (int) $clientId;
     }
 }

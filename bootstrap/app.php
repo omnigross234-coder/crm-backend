@@ -20,18 +20,24 @@ return Application::configure(basePath: dirname(__DIR__))
         SendFollowupReminders::class,
     ])
     ->withSchedule(function (Schedule $schedule): void {
-        $schedule->command('followups:send-reminders')->everyMinute();
+        $schedule->command('followups:send-reminders')
+            ->everyMinute()
+            ->withoutOverlapping(2);
 
         $schedule->command('db:backup')
             ->dailyAt('18:00')
-            ->withoutOverlapping();
+            ->withoutOverlapping(120);
     })
     ->withMiddleware(function (Middleware $middleware): void {
         $middleware->prepend(HandleCors::class);
         $middleware->redirectGuestsTo(null);
 
         $middleware->alias([
-            'role' => RoleMiddleware::class,
+            'role'        => \App\Http\Middleware\EnsureRole::class,
+            'tenant'      => \App\Http\Middleware\IdentifyTenant::class,
+            'super_admin' => \App\Http\Middleware\EnsureSuperAdmin::class,
+            'account.active' => \App\Http\Middleware\EnsureAccountIsActive::class,
+            'subscription.active' => \App\Http\Middleware\EnsureSubscriptionIsActive::class,
         ]);
     })
     ->withExceptions(function (Exceptions $exceptions): void {

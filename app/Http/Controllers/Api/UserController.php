@@ -12,9 +12,10 @@ use Illuminate\Validation\Rule;
 
 class UserController extends Controller
 {
-    public function index(): JsonResponse
+    public function index(Request $request): JsonResponse
     {
         $users = User::select('id', 'name', 'email', 'phone', 'role', 'status', 'created_at')
+            ->where('client_id', $request->user()->client_id)
             ->latest()
             ->get();
 
@@ -28,6 +29,7 @@ class UserController extends Controller
     public function store(UserRequest $request): JsonResponse
     {
         $user = User::create([
+            'client_id' => $request->user()->client_id,
             'name' => $request->name,
             'email' => $request->email,
             'password' => Hash::make($request->password),
@@ -45,6 +47,7 @@ class UserController extends Controller
 
     public function update(Request $request, User $user): JsonResponse
     {
+        $this->ensureSameClient($request, $user);
         $request->validate([
             'name' => ['required', 'string', 'max:255'],
             'email' => ['required', 'email', Rule::unique('users', 'email')->ignore($user->id)],
@@ -91,6 +94,7 @@ class UserController extends Controller
     // }
     public function toggleStatus(Request $request, User $user): JsonResponse
     {
+        $this->ensureSameClient($request, $user);
         if ($user->id === $request->user()->id) {
             return response()->json([
                 'success' => false,
@@ -102,6 +106,11 @@ class UserController extends Controller
         $user->update([
             'status' => $user->status === 'active' ? 'inactive' : 'active',
         ]);
+        if ($user->status === 'inactive') {
+
+      $user->tokens()->delete();
+
+      }
 
         return response()->json([
             'success' => true,
@@ -130,6 +139,7 @@ class UserController extends Controller
 
     public function destroy(Request $request, User $user): JsonResponse
     {
+        $this->ensureSameClient($request, $user);
         if ($user->id === $request->user()->id) {
             return response()->json([
                 'success' => false,
@@ -145,5 +155,15 @@ class UserController extends Controller
             'message' => 'User deleted.',
             'data' => null,
         ]);
+    }
+
+    private function ensureSameClient(Request $request, User $user): void
+    {
+        abort_unless(
+            $request->user()->client_id !== null
+                && $user->client_id === $request->user()->client_id,
+            404,
+            'User not found.'
+        );
     }
 }

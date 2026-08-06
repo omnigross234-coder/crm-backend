@@ -48,6 +48,15 @@ return [
     'whatsapp_from'  => env('TWILIO_WHATSAPP_FROM'),
 ],
 
+    'meta' => [
+        'verify_token' => env('META_WEBHOOK_VERIFY_TOKEN'),
+        'page_access_token' => env('META_PAGE_ACCESS_TOKEN'),
+        'app_secret' => env('META_APP_SECRET'),
+        'graph_version' => env('META_GRAPH_VERSION', 'v20.0'),
+        'created_by_user_id' => env('META_CREATED_BY_USER_ID', 1),
+        
+    ],
+
     'cron' => [
         'reminder_key' => env('REMINDER_RUN_KEY'),
         'backup_key' => env('BACKUP_RUN_KEY'),

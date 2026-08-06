@@ -33,6 +33,20 @@ class AuthController extends Controller
             ], 403);
         }
 
+        // A suspended tenant must prevent every linked user (client admin and
+        // sales users) from receiving an API token. Super admins do not belong
+        // to a client and remain unaffected.
+        $user->load('client');
+        if (! $user->isSuperAdmin() && $user->client?->status === 'suspended') {
+            Auth::logout();
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Your client account is suspended. Please contact the platform administrator.',
+                'data'    => null,
+            ], 403);
+        }
+
         $token = $user->createToken('crm-token')->plainTextToken;
 
         return response()->json([

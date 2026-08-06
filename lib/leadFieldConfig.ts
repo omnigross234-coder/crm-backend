@@ -22,13 +22,16 @@ export interface LeadFieldSetting {
 }
 
 interface LeadFieldSettingResponse {
-  field_key: LeadExtraFieldKey;
+  key?: LeadExtraFieldKey;
+  field_key?: LeadExtraFieldKey;
   label: string;
+  type?: LeadExtraFieldType;
   field_type?: LeadExtraFieldType;
   active: boolean;
   required: boolean;
+  isCustom?: boolean;
   is_custom?: boolean;
-  sort_order: number;
+  sort_order?: number;
 }
 
 export const LEAD_EXTRA_FIELDS: LeadExtraFieldDefinition[] = [
@@ -104,13 +107,13 @@ export function saveLeadFieldSettings(settings: LeadFieldSetting[]) {
 }
 
 function fromApi(settings: LeadFieldSettingResponse[]): LeadFieldSetting[] {
-  return settings.map((setting) => ({
-    key: setting.field_key,
+  return settings.filter((setting) => Boolean(setting.key ?? setting.field_key)).map((setting) => ({
+    key: (setting.key ?? setting.field_key) as LeadExtraFieldKey,
     label: setting.label,
-    type: setting.field_type ?? "text",
+    type: setting.type ?? setting.field_type ?? "text",
     active: setting.active,
     required: setting.required,
-    isCustom: setting.is_custom,
+    isCustom: setting.isCustom ?? setting.is_custom,
   }));
 }
 
@@ -145,7 +148,7 @@ export async function createLeadFieldSetting(input: {
 }): Promise<LeadFieldSetting[]> {
   const res = await api.post<ApiResponse<LeadFieldSettingResponse[]>>("/lead-field-settings", {
     label: input.label,
-    field_type: input.type,
+    type: input.type,
     required: input.required,
   });
   const saved = fromApi(res.data);

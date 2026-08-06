@@ -3,6 +3,7 @@
 namespace App\Models;
 
 use Illuminate\Database\Eloquent\Factories\HasFactory;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
@@ -13,7 +14,7 @@ class User extends Authenticatable
     use HasApiTokens, HasFactory, Notifiable;
 
     protected $fillable = [
-        'name', 'email', 'password', 'role',
+        'client_id','name', 'email', 'password', 'role',
         'phone', 'profile_photo', 'status', 'fcm_token',
     ];
 
@@ -24,6 +25,21 @@ class User extends Authenticatable
         return [
             'password' => 'hashed',
         ];
+    }
+
+    public function client(): BelongsTo
+    {
+        return $this->belongsTo(Client::class);
+    }
+
+    public function isSuperAdmin(): bool
+    {
+        return $this->role === 'super_admin';
+    }
+
+    public function isClientAdmin(): bool
+    {
+        return $this->role === 'client_admin';
     }
 
     public function leads(): HasMany
@@ -45,4 +61,13 @@ class User extends Authenticatable
     {
         return $this->hasMany(ActivityLog::class);
     }
+    public function isSalesManager(): bool
+{
+    return $this->role === 'sales_manager';
+}
+
+public function isSalesEmployee(): bool
+{
+    return $this->role === 'sales_employee';
+}
 }

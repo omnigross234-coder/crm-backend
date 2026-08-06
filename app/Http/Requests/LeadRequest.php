@@ -19,6 +19,7 @@ class LeadRequest extends FormRequest
     public function rules(): array
     {
         $leadId = $this->route('id');
+        $clientId = $this->user()?->client_id;
 
         $rules = [
             'name'     => [
@@ -32,17 +33,22 @@ class LeadRequest extends FormRequest
                 'required',
                 'string',
                 'regex:/^\d{10}$/',
-                Rule::unique('leads', 'phone')->ignore($leadId),
+                Rule::unique('leads', 'phone')
+                    ->where(fn ($query) => $query->where('client_id', $clientId))
+                    ->ignore($leadId),
             ],
             'email'    => [
                 'nullable',
                 'email',
                 'max:255',
-                Rule::unique('leads', 'email')->ignore($leadId),
+                Rule::unique('leads', 'email')
+                    ->where(fn ($query) => $query->where('client_id', $clientId))
+                    ->ignore($leadId),
             ],
             'company'  => ['nullable', 'string', 'max:100'],
+            'address'  => ['nullable', 'string', 'max:500'],
             'source'   => ['required', Rule::in(['website', 'referral', 'social', 'cold_call', 'other'])],
-            'status'   => ['required', Rule::in(['new', 'interested', 'followup', 'converted', 'closed', 'not_interested'])],
+            'status'   => ['required', Rule::in(['new', 'interested', 'followup', 'demo', 'converted', 'closed', 'not_interested'])],
             'priority' => ['nullable', Rule::in(['hot', 'warm', 'cold'])],
             'assigned_to' => ['nullable', 'exists:users,id'],
             'remarks'  => ['nullable', 'string', 'max:500'],
@@ -82,6 +88,7 @@ class LeadRequest extends FormRequest
             'phone.unique' => 'This phone number is already used by another lead.',
             'email.unique' => 'This email address is already used by another lead.',
             'company.max' => 'Company must be 100 characters or less.',
+            'address.max' => 'Address must be 500 characters or less.',
             'remarks.max' => 'Remarks must be 500 characters or less.',
         ];
     }

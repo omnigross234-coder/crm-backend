@@ -9,6 +9,7 @@ class CallLog extends Model
     protected $fillable = [
         'user_id',
         'lead_id',
+        'direction',
         'called_at',
         'duration_seconds',
         'is_connected',
