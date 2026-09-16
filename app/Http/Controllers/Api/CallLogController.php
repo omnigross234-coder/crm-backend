@@ -132,14 +132,33 @@ class CallLogController extends Controller
 
         $user = $request->user();
 
-        $belongsToClient = $callLog->user()
+        // CallLog Update Super Admin Remediation: this tenant-boundary check
+        // compared the call log owner's client_id against the CALLER's own
+        // client_id — correct for every tenant-scoped role, but a
+        // super_admin's own client_id is always null, so this always
+        // failed for any real (tenant-scoped) call log, returning 404 for
+        // a record that genuinely exists. Reproduced live before this fix:
+        // a super_admin updating a real call log got 404 "Call record not
+        // found.", while the identical request succeeded once the call
+        // log's owner also happened to have client_id = null. Fixed by
+        // exempting super_admin from this check entirely, matching
+        // CallLogController::index()'s existing super_admin branch (no
+        // tenant filter applied) and LeadController::scopeLeadsForUser()'s
+        // hierarchy (super_admin: no scoping at all).
+        $belongsToClient = Roles::isSuperAdmin($user->role) || $callLog->user()
             ->where('client_id', $user->client_id)
             ->exists();
         if (! $belongsToClient) {
             abort(404, 'Call record not found.');
         }
 
-        if (! $this->isClientAdministrator($user) && $callLog->user_id !== $user->id) {
+        // Same defect class, second check: isClientAdministrator() is false
+        // for super_admin (Roles::isTenantAdmin() excludes it), so without
+        // this exemption a super_admin who cleared the check above would
+        // still be blocked here unless they happened to own the record
+        // themselves — the exact pattern already fixed in store() and
+        // storeManual() above.
+        if (! $this->isClientAdministrator($user) && ! Roles::isSuperAdmin($user->role) && $callLog->user_id !== $user->id) {
             return response()->json([
                 'success' => false,
                 'message' => 'You may only update your own call records.',
