@@ -12,6 +12,7 @@ use App\Http\Controllers\Api\FollowupReminderController;
 use App\Http\Controllers\Api\LeadController;
 use App\Http\Controllers\Api\LeadFieldSettingController;
 use App\Http\Controllers\Api\NotificationController;
+use App\Http\Controllers\Api\SuperAdminTenantController;
 use App\Http\Controllers\Api\UserController;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Artisan;
@@ -80,6 +81,16 @@ Route::middleware([
     Route::middleware('super_admin')->group(function () {
         Route::apiResource('clients', ClientController::class);
         Route::post('backup/run', [BackupController::class, 'run']);
+
+        // Phase 5 (Tenant Management Control Center). Read-only enriched
+        // list/detail views — tenant creation/status/admin-contact
+        // mutations deliberately continue to use the existing
+        // `Route::apiResource('clients', ...)` above, not a parallel set
+        // of routes here.
+        Route::prefix('admin/tenants')->group(function () {
+            Route::get('/', [SuperAdminTenantController::class, 'index']);
+            Route::get('{client}', [SuperAdminTenantController::class, 'show']);
+        });
     });
 
     Route::get('backup/list', [BackupController::class, 'list'])
