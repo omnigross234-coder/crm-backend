@@ -13,6 +13,7 @@ use App\Http\Controllers\Api\LeadController;
 use App\Http\Controllers\Api\LeadFieldSettingController;
 use App\Http\Controllers\Api\NotificationController;
 use App\Http\Controllers\Api\SuperAdminTenantController;
+use App\Http\Controllers\Api\SuperAdminUserController;
 use App\Http\Controllers\Api\UserController;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Artisan;
@@ -90,6 +91,19 @@ Route::middleware([
         Route::prefix('admin/tenants')->group(function () {
             Route::get('/', [SuperAdminTenantController::class, 'index']);
             Route::get('{client}', [SuperAdminTenantController::class, 'show']);
+        });
+
+        // Phase 6 (Super Admin User Management). Namespaced under
+        // admin/users — NOT users/* — because that prefix is already
+        // owned by the tenant-scoped UserController (role:admin,
+        // client_admin only), which is left completely unchanged.
+        Route::prefix('admin/users')->group(function () {
+            Route::get('/', [SuperAdminUserController::class, 'index']);
+            Route::post('/', [SuperAdminUserController::class, 'store']);
+            Route::get('{user}', [SuperAdminUserController::class, 'show']);
+            Route::put('{user}', [SuperAdminUserController::class, 'update']);
+            Route::patch('{user}/status', [SuperAdminUserController::class, 'toggleStatus']);
+            Route::post('{user}/send-password-reset', [SuperAdminUserController::class, 'sendPasswordReset']);
         });
     });
 

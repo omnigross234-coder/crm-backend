@@ -40,6 +40,11 @@ class AuditLogController extends Controller
         'lead' => \App\Models\Lead::class,
         'subscription' => \App\Models\Subscription::class,
         'facebookpage' => \App\Models\FacebookPage::class,
+        // Phase 6 (Super Admin User Management): so a user detail page's
+        // audit panel can find user.created/updated/activated/etc events
+        // via resource=user&subject_id=, the same pattern already used by
+        // the Phase 5 tenant detail page for resource=client.
+        'user' => \App\Models\User::class,
     ];
 
     /**
