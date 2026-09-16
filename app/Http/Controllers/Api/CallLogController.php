@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Models\CallLog;
 use App\Models\Lead;
+use App\Support\Roles;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -14,6 +15,31 @@ class CallLogController extends Controller
     // Retained for older app builds. Device messaging replaces Twilio.
     public function store(Request $request, Lead $lead): JsonResponse
     {
+        // SEC-F01: this legacy path had no ownership check at all — a sales
+        // user could log a call against any lead in their own tenant, not
+        // just one assigned to them. Mirrors the check storeManual() already
+        // applies. Lead's own global scope (BelongsToClient) already keeps
+        // this to leads within the caller's tenant via route-model binding.
+        //
+        // CallLog Write-Path Super Admin Remediation: the ownership check
+        // below did not exempt super_admin (Roles::isTenantAdmin() is false
+        // for super_admin, same defect class already fixed in
+        // FollowupController::findLead()) — a super_admin was wrongly
+        // required to have the lead assigned to their own user id, which is
+        // essentially never true, so every write from a super_admin 403'd.
+        // Fixed to match LeadController::scopeLeadsForUser()'s hierarchy:
+        // super_admin and tenant admins get no ownership narrowing; every
+        // other role still does. Lead's global scope already grants
+        // super_admin platform-wide reach to the lead itself; this only
+        // changes who additionally needs `assigned_to === $user->id`.
+        $user = $request->user();
+        if (! $this->isClientAdministrator($user) && ! Roles::isSuperAdmin($user->role) && $lead->assigned_to !== $user->id) {
+            return response()->json([
+                'success' => false,
+                'message' => 'You may only record calls for leads assigned to you.',
+            ], 403);
+        }
+
         CallLog::create([
             'user_id' => $request->user()->id,
             'lead_id' => $lead->id,
@@ -49,7 +75,8 @@ class CallLogController extends Controller
 
         $user = $request->user();
         $lead = Lead::findOrFail($data['lead_id']);
-        if (! $this->isClientAdministrator($user) && $lead->assigned_to !== $user->id) {
+        // See the matching comment in store() above — same fix, same reason.
+        if (! $this->isClientAdministrator($user) && ! Roles::isSuperAdmin($user->role) && $lead->assigned_to !== $user->id) {
             return response()->json([
                 'success' => false,
                 'message' => 'You may only record calls for leads assigned to you.',
