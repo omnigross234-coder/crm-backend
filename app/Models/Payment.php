@@ -12,6 +12,8 @@ class Payment extends Model
 
     protected $fillable = [
         'invoice_id',
+        'subscription_id',
+        'coupon_id',
         'gateway',
         'gateway_ref',
         'amount',
@@ -27,5 +29,15 @@ class Payment extends Model
     public function invoice(): BelongsTo
     {
         return $this->belongsTo(Invoice::class);
+    }
+
+    public function subscription(): BelongsTo
+    {
+        return $this->belongsTo(Subscription::class);
+    }
+
+    public function coupon(): BelongsTo
+    {
+        return $this->belongsTo(Coupon::class);
     }
 }

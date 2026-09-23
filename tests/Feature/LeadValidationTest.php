@@ -2,6 +2,7 @@
 
 namespace Tests\Feature;
 
+use App\Models\Client;
 use App\Models\Lead;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -37,6 +38,7 @@ class LeadValidationTest extends TestCase
 
         $lead = Lead::create([
             ...$this->validLead(),
+            'client_id' => $user->client_id,
             'assigned_to' => $user->id,
             'created_by' => $user->id,
         ]);
@@ -76,6 +78,7 @@ class LeadValidationTest extends TestCase
 
         Lead::create([
             ...$this->validLead(),
+            'client_id' => $user->client_id,
             'assigned_to' => $user->id,
             'created_by' => $user->id,
         ]);
@@ -89,6 +92,7 @@ class LeadValidationTest extends TestCase
     private function user(): User
     {
         return User::create([
+            'client_id' => Client::factory()->create()->id,
             'name' => 'Sales User',
             'email' => 'sales-'.uniqid().'@example.com',
             'password' => 'password',

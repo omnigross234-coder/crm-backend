@@ -2,6 +2,7 @@
 
 namespace Tests\Feature;
 
+use App\Models\Client;
 use App\Models\Followup;
 use App\Models\Lead;
 use App\Models\User;
@@ -14,8 +15,11 @@ class DashboardFollowupCountTest extends TestCase
 
     public function test_dashboard_counts_distinct_leads_with_followups_today(): void
     {
-        $admin = $this->user('admin');
-        $sales = $this->user('sales');
+        // admin is a tenant-scoped role (like client_admin), not a
+        // cross-tenant one — see the same-client note on user() below.
+        $client = Client::factory()->create();
+        $admin = $this->user('admin', $client->id);
+        $sales = $this->user('sales', $client->id);
         $firstLead = $this->lead($sales, '9876543210');
         $secondLead = $this->lead($sales, '9876543211');
 
@@ -55,9 +59,10 @@ class DashboardFollowupCountTest extends TestCase
             ->assertJsonPath('data.total', 1);
     }
 
-    private function user(string $role): User
+    private function user(string $role, ?int $clientId = null): User
     {
         return User::create([
+            'client_id' => $clientId ?? Client::factory()->create()->id,
             'name' => ucfirst($role).' User',
             'email' => uniqid($role.'-', true).'@example.com',
             'password' => 'password',
@@ -69,6 +74,7 @@ class DashboardFollowupCountTest extends TestCase
     private function lead(User $sales, string $phone): Lead
     {
         return Lead::create([
+            'client_id' => $sales->client_id,
             'name' => 'Test Lead',
             'phone' => $phone,
             'source' => 'website',

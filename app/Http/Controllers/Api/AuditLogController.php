@@ -119,7 +119,11 @@ class AuditLogController extends Controller
             $query->where('description', 'like', '%'.$validated['search'].'%');
         }
 
-        $logs = $query->orderBy($sortBy, $sortDir)->paginate($perPage);
+        // id is the unique tie-breaker: created_at has one-second resolution
+        // (and the other sortable columns repeat heavily), so without it rows
+        // sharing a value are ordered arbitrarily and offset pagination
+        // drops some rows and repeats others across pages.
+        $logs = $query->orderBy($sortBy, $sortDir)->orderBy('id', $sortDir)->paginate($perPage);
 
         $logs->getCollection()->transform(function (ActivityLog $log) {
             return [

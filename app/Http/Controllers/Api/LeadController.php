@@ -8,6 +8,8 @@ use App\Models\ActivityLog;
 use App\Models\Lead;
 use App\Models\User;
 use App\Services\ActivityLogger;
+use App\Support\LeadSearch;
+use App\Support\Roles;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Validation\Rule;
@@ -19,28 +21,29 @@ use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Database\QueryException;
 
 class LeadController extends Controller
 {
     /**
-     * Roles that see ALL leads across ALL clients/tenants.
-     * Keep this list tiny and audited — it bypasses tenant isolation entirely.
+     * Roles that see ALL leads across ALL clients/tenants, and roles that
+     * administer leads only within their own client/tenant.
+     *
+     * Phase 2 Foundation: consolidated into App\Support\Roles, the single
+     * source of truth used app-wide, so this file's SUPER_ADMIN_ROLES can
+     * never again independently drift to include 'admin' the way it once
+     * did — see App\Support\Roles's docblock for that incident. Behavior
+     * here is unchanged: 'super_admin' only bypasses tenant isolation;
+     * 'admin' and 'client_admin' administer leads within their own tenant.
      */
-    private const SUPER_ADMIN_ROLES = ['admin'];
-
-    /**
-     * Roles that administer leads, but ONLY within their own client/tenant.
-     */
-    private const CLIENT_ADMIN_ROLES = ['client_admin'];
-
     private function isSuperAdmin(User $user): bool
     {
-        return in_array($user->role, self::SUPER_ADMIN_ROLES, true);
+        return Roles::isSuperAdmin($user->role);
     }
 
     private function isClientAdmin(User $user): bool
     {
-        return in_array($user->role, self::CLIENT_ADMIN_ROLES, true);
+        return Roles::isTenantAdmin($user->role);
     }
 
     /**
@@ -107,17 +110,11 @@ class LeadController extends Controller
             });
         }
         if ($request->filled('search')) {
-            $search = $request->search;
-            $query->where(function ($q) use ($search) {
-                $q->where('name', 'like', "%{$search}%")
-                    ->orWhere('phone', 'like', "%{$search}%")
-                    ->orWhere('email', 'like', "%{$search}%");
-            });
-            $countQuery->where(function ($q) use ($search) {
-                $q->where('name', 'like', "%{$search}%")
-                    ->orWhere('phone', 'like', "%{$search}%")
-                    ->orWhere('email', 'like', "%{$search}%");
-            });
+            // See App\Support\LeadSearch and PHASE2B-REMEDIATION-REPORT.md §5:
+            // fast, index-backed path for name search, guaranteed-correct
+            // full scan for anything phone/email-shaped or that the fast
+            // path can't confidently answer.
+            LeadSearch::apply($request->search, clone $countQuery, $query, $countQuery);
         }
 
         $totalCount = (clone $countQuery)->count();
@@ -166,8 +163,34 @@ class LeadController extends Controller
             $query->where('client_id', $request->input('client_id'));
         }
 
-        $perPage = min((int) $request->input('per_page', 15), 100);
-        $leads = $query->latest()->paginate($perPage);
+        // $totalCount (line 128) already counted this exact scope UNLESS
+        // assigned_to/client_id narrowed $query further below (lines 146,
+        // 171) — reuse it when the scopes still match instead of letting
+        // paginate() run its own second COUNT(*) against the same
+        // tenant-filtered `leads` table on every single request (this was
+        // previously a silent double-count; see PHASE2B-REMEDIATION-REPORT.md
+        // §B). When the scope did diverge, a fresh count is required for a
+        // correct pagination total — reusing $totalCount there would report
+        // the wrong last page for that narrower view.
+        $scopeNarrowedAfterTotalCount = ($request->filled('assigned_to') && $isAnyAdmin)
+            || ($this->isSuperAdmin($user) && $request->filled('client_id'));
+        $paginationTotal = $scopeNarrowedAfterTotalCount ? (clone $query)->count() : $totalCount;
+
+        // Phase 3 Workstream 02: a negative value used to survive into
+        // paginate() and produce an invalid "OFFSET without LIMIT" SQL
+        // statement (HTTP 500). The first fix (max(1, min(...))) closed
+        // that, but also silently changed per_page=0 from "use the
+        // default" (Laravel's own pagination falls back to the default
+        // for a falsy 0) to "show 1 result" — a real, if minor, response
+        // contract regression caught by the Workstream 02 re-test.
+        // Restored: missing OR explicitly 0 both mean "use the default
+        // (15)", matching the pre-Workstream-02 behavior exactly; only a
+        // genuinely non-zero value gets clamped to the [1, 100] range.
+        $rawPerPage = $request->input('per_page');
+        $perPage = ($rawPerPage === null || (int) $rawPerPage === 0)
+            ? 15
+            : max(1, min((int) $rawPerPage, 100));
+        $leads = $query->latest()->paginate($perPage, ['*'], 'page', null, $paginationTotal);
 
         return response()->json([
             'success' => true,
@@ -212,10 +235,19 @@ class LeadController extends Controller
         }
 
         $lead = new Lead();
-        $lead->forceFill($this->filterLeadColumns(array_merge(
-            $data,
-            ['created_by' => $user->id]
-        )))->save();
+
+        try {
+            $lead->forceFill($this->filterLeadColumns(array_merge(
+                $data,
+                ['created_by' => $user->id]
+            )))->save();
+        } catch (QueryException $e) {
+            if ($response = $this->duplicateLeadResponse($e)) {
+                return $response;
+            }
+
+            throw $e;
+        }
 
         ActivityLogger::log('lead.created', $lead, ['source' => $lead->source]);
 
@@ -226,9 +258,15 @@ class LeadController extends Controller
         ], 201);
     }
 
-    public function show(Request $request, int $id): JsonResponse
+    public function show(Request $request, string $id): JsonResponse
     {
-        $lead = $this->findLead($request, $id);
+        $leadId = $this->parseRouteId($id);
+
+        if ($leadId === null) {
+            return $this->notFound();
+        }
+
+        $lead = $this->findLead($request, $leadId);
 
         if (! $lead) {
             return $this->notFound();
@@ -243,9 +281,15 @@ class LeadController extends Controller
         ]);
     }
 
-    public function update(LeadRequest $request, int $id): JsonResponse
+    public function update(LeadRequest $request, string $id): JsonResponse
     {
-        $lead = $this->findLead($request, $id);
+        $leadId = $this->parseRouteId($id);
+
+        if ($leadId === null) {
+            return $this->notFound();
+        }
+
+        $lead = $this->findLead($request, $leadId);
 
         if (! $lead) {
             return $this->notFound();
@@ -266,26 +310,53 @@ class LeadController extends Controller
             }
         }
 
-        $lead->forceFill($this->filterLeadColumns($data))->save();
+        try {
+            $lead->forceFill($this->filterLeadColumns($data))->save();
+        } catch (QueryException $e) {
+            if ($response = $this->duplicateLeadResponse($e)) {
+                return $response;
+            }
+
+            throw $e;
+        }
+
+        $fresh = $lead->fresh(['assignedTo:id,name', 'createdBy:id,name']);
+
+        if (! $fresh) {
+            // Phase 3 Workstream 03 finding #3: the lead was deleted by a
+            // concurrent request between findLead() above and save() —
+            // save() then silently affected 0 rows (Eloquent doesn't check
+            // this), so returning success here would falsely claim an
+            // update that never took effect. Report the same "not found"
+            // outcome a request arriving a moment later would have gotten,
+            // instead of success:true with data:null.
+            return $this->notFound();
+        }
 
         $this->logActivity($request, 'update', 'Lead', $lead->id, "Updated lead: {$lead->name}");
 
         return response()->json([
             'success' => true,
             'message' => 'Lead updated successfully.',
-            'data' => $lead->fresh(['assignedTo:id,name', 'createdBy:id,name']),
+            'data' => $fresh,
         ]);
     }
 
-    public function updateStatus(Request $request, int $id): JsonResponse
+    public function updateStatus(Request $request, string $id): JsonResponse
     {
+        $leadId = $this->parseRouteId($id);
+
+        if ($leadId === null) {
+            return $this->notFound();
+        }
+
         $request->validate([
             'status' => ['required', Rule::in([
                 'new', 'interested', 'followup', 'demo', 'converted', 'closed', 'not_interested',
             ])],
         ]);
 
-        $lead = $this->findLead($request, $id);
+        $lead = $this->findLead($request, $leadId);
 
         if (! $lead) {
             return $this->notFound();
@@ -302,9 +373,15 @@ class LeadController extends Controller
         ]);
     }
 
-    public function destroy(Request $request, int $id): JsonResponse
+    public function destroy(Request $request, string $id): JsonResponse
     {
-        $lead = $this->findLead($request, $id);
+        $leadId = $this->parseRouteId($id);
+
+        if ($leadId === null) {
+            return $this->notFound();
+        }
+
+        $lead = $this->findLead($request, $leadId);
 
         if (! $lead) {
             return $this->notFound();
@@ -320,15 +397,31 @@ class LeadController extends Controller
         ]);
     }
 
-    public function assign(Request $request, int $id): JsonResponse
+    public function assign(Request $request, string $id): JsonResponse
     {
+        $leadId = $this->parseRouteId($id);
+
+        if ($leadId === null) {
+            return $this->notFound();
+        }
+
+        // Workstream 12 finding W12-F02: bare 'exists:users,id' accepts an
+        // array value too (Laravel's exists rule validates each element),
+        // so a request sending assigned_to as an array/object passed
+        // validation, then User::find() received that non-scalar value
+        // and returned a Collection instead of a single model — the
+        // controller's own client_id/role checks below then failed on
+        // that Collection with no such property, producing an uncaught
+        // error and a generic 500. 'integer' forces a genuine scalar
+        // before 'exists' ever runs, matching this endpoint's actual,
+        // always-scalar contract.
         $request->validate([
-            'assigned_to' => ['required', 'exists:users,id'],
+            'assigned_to' => ['required', 'integer', 'exists:users,id'],
         ]);
 
         // Tenant-scope the lead lookup itself — previously this used Lead::find($id)
         // with no scoping at all, letting a client_admin assign leads from OTHER tenants.
-        $lead = $this->findLead($request, $id);
+        $lead = $this->findLead($request, $leadId);
 
         if (! $lead) {
             return $this->notFound();
@@ -359,6 +452,33 @@ class LeadController extends Controller
     }
 
     /**
+     * Workstream 06 finding W06-F01: these routes used to type-hint their
+     * route parameter as primitive `int`, which let PHP's own argument
+     * coercion throw an uncaught TypeError — before this class's code ever
+     * ran — for a non-numeric segment ("abc") or one that's numeric but
+     * out of PHP's integer range (a 20-digit overflow value), producing an
+     * unhandled 500 instead of the app's normal 404. filter_var(...,
+     * FILTER_VALIDATE_INT) is what actually distinguishes those two cases
+     * from a valid ID; is_numeric() alone would not, since it accepts an
+     * out-of-range digit string just as happily as an in-range one.
+     *
+     * A route ->where('id', '[0-9]+') constraint was considered instead
+     * and rejected: it still lets an overflow value like
+     * "99999999999999999999" through (it's all digits, so it matches the
+     * regex — the TypeError happens later, from magnitude, not shape), and
+     * excluding a leading "-" would also stop /leads/-1 from ever reaching
+     * the controller at all, changing its existing "Lead not found." 404
+     * into a differently-worded router-level 404 — a behavior change this
+     * fix must not introduce.
+     */
+    private function parseRouteId(string $id): ?int
+    {
+        $parsed = filter_var($id, FILTER_VALIDATE_INT);
+
+        return $parsed === false ? null : $parsed;
+    }
+
+    /**
      * Central lookup used by show/update/updateStatus/destroy/assign.
      * Always routes through scopeLeadsForUser so tenant + ownership rules
      * are enforced identically everywhere a single lead is fetched by ID.
@@ -382,9 +502,56 @@ class LeadController extends Controller
 
     private function filterLeadColumns(array $data): array
     {
-        return collect($data)
-            ->filter(fn ($value, $key) => Schema::hasColumn('leads', $key))
-            ->all();
+        return \App\Services\LeadImport\LeadColumnFilter::filter($data);
+    }
+
+    /**
+     * Workstream 12 finding W12-F01: LeadRules' Rule::unique() checks for
+     * phone/email are a check-then-insert pattern with nothing underneath
+     * to make that sequence atomic — confirmed live, concurrent identical
+     * requests could all pass validation and all insert. The database
+     * itself is now the final authority (leads_client_phone_unique /
+     * leads_client_email_unique, see the migration this finding
+     * introduced), so the *losing* concurrent request now fails here, as
+     * a genuine QueryException, instead of never happening at all.
+     *
+     * Only ever recognizes these two specific, named constraints — never
+     * treated as a general "swallow any QueryException" handler. Any
+     * other database error (a different constraint, a connection
+     * failure, anything unrelated) is deliberately rethrown by the
+     * caller and falls through to the app's existing, already-sanitized
+     * generic exception handling.
+     */
+    private function duplicateLeadResponse(QueryException $e): ?JsonResponse
+    {
+        if ((int) ($e->errorInfo[1] ?? 0) !== 1062) {
+            return null;
+        }
+
+        $message = $e->getMessage();
+
+        // Same message text LeadRules::messages() already uses for the
+        // pre-insert Rule::unique() check (the path a sequential
+        // duplicate takes) — the race-losing concurrent request should
+        // look identical to that, not introduce a second wording for the
+        // same rejection.
+        if (str_contains($message, 'leads_client_phone_unique')) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Validation failed.',
+                'data' => ['phone' => ['This phone number is already used by another lead.']],
+            ], 422);
+        }
+
+        if (str_contains($message, 'leads_client_email_unique')) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Validation failed.',
+                'data' => ['email' => ['This email address is already used by another lead.']],
+            ], 422);
+        }
+
+        return null;
     }
 
     private function logActivity(Request $request, string $action, string $module, int $recordId, string $description): void
@@ -481,7 +648,25 @@ class LeadController extends Controller
             ], 403);
         }
 
-        Log::info('Meta webhook received.', $request->all());
+        // OBS-F04 (Phase 1 audit): this used to log the raw webhook body
+        // (Log::info(..., $request->all())) wholesale. Reproduced against
+        // the actual payload shape Meta sends (see MetaWebhookLeadTest.php)
+        // and confirmed the webhook body itself never carries lead PII
+        // (name/phone/email) - only routing metadata (leadgen_id/page_id/
+        // form_id); the PII arrives separately via fetchMetaLead() below
+        // and is never passed to Log:: anywhere in this class. Logging an
+        // explicit, allowlisted summary instead of the raw body regardless
+        // - defense in depth against a future Meta payload shape change,
+        // and it was never useful to have the *whole* body in the log for
+        // debugging purposes this summary doesn't already cover.
+        Log::info('Meta webhook received.', [
+            'entry_count' => count($request->input('entry', [])),
+            'leadgen_ids' => collect($request->input('entry', []))
+                ->flatMap(fn ($entry) => $entry['changes'] ?? [])
+                ->pluck('value.leadgen_id')
+                ->filter()
+                ->values(),
+        ]);
 
         foreach ($request->input('entry', []) as $entry) {
             foreach ($entry['changes'] ?? [] as $change) {
@@ -494,7 +679,8 @@ class LeadController extends Controller
 
                 if (! $leadgenId) {
                     Log::warning('Meta webhook leadgen event missing leadgen_id.', [
-                        'change' => $change,
+                        'page_id' => $value['page_id'] ?? null,
+                        'form_id' => $value['form_id'] ?? null,
                     ]);
                     continue;
                 }
@@ -512,8 +698,15 @@ class LeadController extends Controller
     {
         $appSecret = config('services.meta.app_secret');
 
+        // SEC-F07: fail CLOSED, not open. An unconfigured secret must never
+        // be treated as "signature check not required" — that would let
+        // anyone POST a fabricated leadgen payload to this public,
+        // unauthenticated endpoint and have it written straight into the
+        // leads table.
         if (! $appSecret) {
-            return true;
+            Log::error('Meta webhook rejected: META_APP_SECRET is not configured.');
+
+            return false;
         }
 
         $signature = (string) $request->header('X-Hub-Signature-256', '');
@@ -539,10 +732,19 @@ class LeadController extends Controller
         try {
             $metaLead = $this->fetchMetaLead($leadgenId, $pageAccessToken);
         } catch (RequestException $exception) {
+            // OBS-F04: was logging Meta's raw error response body wholesale.
+            // A failed fetch never returns lead data (Graph API only
+            // returns field_data on success), so this was never actually
+            // logging PII - but it's still an unbounded dump of external
+            // content. Meta's Graph API error shape is consistently
+            // {error: {message, type, code}}; log just that, not the body
+            // verbatim.
+            $errorBody = $exception->response?->json('error');
             Log::warning('Meta lead fetch failed.', [
                 'leadgen_id' => $leadgenId,
                 'status' => $exception->response?->status(),
-                'response' => $exception->response?->json(),
+                'error_message' => $errorBody['message'] ?? null,
+                'error_code' => $errorBody['code'] ?? null,
             ]);
             return;
         }
@@ -629,7 +831,11 @@ class LeadController extends Controller
     {
         $version = config('services.meta.graph_version', 'v20.0');
 
+        // REL-F01: bounded timeout + retry. This is a read-only GET (no
+        // side effects on Meta's side), so retrying on a transient
+        // connection failure is safe.
         return Http::acceptJson()
+            ->timeout(10)->connectTimeout(5)->retry(2, 500)
             ->get("https://graph.facebook.com/{$version}/{$leadgenId}", [
                 'access_token' => $pageAccessToken,
                 'fields' => 'id,created_time,ad_id,form_id,field_data,platform',

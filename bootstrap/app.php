@@ -32,6 +32,18 @@ return Application::configure(basePath: dirname(__DIR__))
         $middleware->prepend(HandleCors::class);
         $middleware->redirectGuestsTo(null);
 
+        // Security Workstream B: prepended LAST, making it the outermost
+        // middleware layer of all (order: SecurityHeaders -> AssignRequestId
+        // -> HandleCors -> ...) so it wraps literally every response,
+        // including one HandleCors short-circuits early for an OPTIONS
+        // preflight (confirmed by testing: appending this instead put it
+        // after HandleCors in the pipeline, and it never ran for OPTIONS
+        // because HandleCors returns its preflight response without
+        // calling $next()). The same "after" pattern AssignRequestId above
+        // already uses correctly reaches exception-rendered responses too
+        // (401/403/404/429 all verified to carry these headers).
+        $middleware->prepend(\App\Http\Middleware\SecurityHeaders::class);
+
         $middleware->alias([
             'role'        => \App\Http\Middleware\EnsureRole::class,
             'tenant'      => \App\Http\Middleware\IdentifyTenant::class,

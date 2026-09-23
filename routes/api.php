@@ -2,6 +2,7 @@
 
 use App\Http\Controllers\BackupController;
 use App\Http\Controllers\Api\AppSettingController;
+use App\Http\Controllers\Api\AuditLogController;
 use App\Http\Controllers\Api\AuthController;
 use App\Http\Controllers\Api\CallLogController;
 use App\Http\Controllers\Api\ClientController;
@@ -12,6 +13,8 @@ use App\Http\Controllers\Api\FollowupReminderController;
 use App\Http\Controllers\Api\LeadController;
 use App\Http\Controllers\Api\LeadFieldSettingController;
 use App\Http\Controllers\Api\NotificationController;
+use App\Http\Controllers\Api\SecurityCenterController;
+use App\Http\Controllers\Api\SuperAdminSessionController;
 use App\Http\Controllers\Api\SuperAdminTenantController;
 use App\Http\Controllers\Api\SuperAdminUserController;
 use App\Http\Controllers\Api\UserController;
@@ -24,10 +27,14 @@ use Illuminate\Support\Facades\Route;
 
 // Public
 Route::prefix('auth')->group(function () {
-    Route::post('login', [AuthController::class, 'login']);
+    Route::post('login', [AuthController::class, 'login'])
+        ->middleware('throttle:login');
 
 });
-Route::post('/test-lead', [LeadController::class, 'storeTestLead']);
+// Tier 1 fix: /test-lead removed. It was public, unauthenticated, and
+// let anyone on the internet inject fake leads into any tenant's data.
+// If you genuinely still need a way to seed test leads, ask and it'll be
+// rebuilt gated behind auth + a secret key instead of wide open.
 // metaAdds test routes
 
 Route::get('/meta/webhook', [LeadController::class, 'verifyWebhook']);
@@ -67,6 +74,7 @@ Route::middleware([
 ])->group(function () {
     Route::prefix('auth')->group(function () {
         Route::post('logout', [AuthController::class, 'logout']);
+Route::post('logout-all', [AuthController::class, 'logoutAllDevices']);
         Route::get('me', [AuthController::class, 'me']);
     });
 });
@@ -82,6 +90,17 @@ Route::middleware([
     Route::middleware('super_admin')->group(function () {
         Route::apiResource('clients', ClientController::class);
         Route::post('backup/run', [BackupController::class, 'run']);
+        Route::get('audit-logs', [AuditLogController::class, 'index']);
+
+        // Super Admin Security Center, Phase 1 (backend foundation only —
+        // no UI). Reuses audit-logs above and Workstream D's
+        // admin/users/{user}/sessions for full drill-down; these two
+        // routes add only what has no existing reader (auth_events) or
+        // needs a bounded platform-wide summary (everything else).
+        Route::prefix('admin/security-center')->group(function () {
+            Route::get('overview', [SecurityCenterController::class, 'overview']);
+            Route::get('auth-events', [SecurityCenterController::class, 'authEvents']);
+        });
 
         // Phase 5 (Tenant Management Control Center). Read-only enriched
         // list/detail views — tenant creation/status/admin-contact
@@ -104,6 +123,16 @@ Route::middleware([
             Route::put('{user}', [SuperAdminUserController::class, 'update']);
             Route::patch('{user}/status', [SuperAdminUserController::class, 'toggleStatus']);
             Route::post('{user}/send-password-reset', [SuperAdminUserController::class, 'sendPasswordReset']);
+
+            // Security Workstream D: session/token visibility and
+            // revocation for a specific user, nested under the same
+            // admin/users prefix (and therefore the same auth:sanctum +
+            // account.active + subscription.active + super_admin
+            // middleware already applied to this whole group).
+            Route::get('{user}/sessions', [SuperAdminSessionController::class, 'index']);
+            Route::delete('{user}/sessions/{session}', [SuperAdminSessionController::class, 'destroy'])
+                ->whereNumber('session');
+            Route::delete('{user}/sessions', [SuperAdminSessionController::class, 'destroyAll']);
         });
     });
 

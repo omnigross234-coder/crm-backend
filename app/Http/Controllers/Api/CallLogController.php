@@ -246,16 +246,39 @@ class CallLogController extends Controller
             : $status === 'not_connected';
     }
 
-    // GET /api/call-logs  ← your existing index (completely unchanged)
+    // GET /api/call-logs
     public function index(Request $request)
     {
         $user = $request->user();
-        $query = CallLog::query()
-            ->whereHas('user', fn ($userQuery) =>
+        $isSuperAdmin = Roles::isSuperAdmin($user->role);
+        $query = CallLog::query();
+
+        if ($isSuperAdmin) {
+            // Phase 2 Foundation fix: previously this always filtered to
+            // `whereHas('user', client_id = $user->client_id)`, but a true
+            // super_admin has client_id === null — so this endpoint
+            // silently returned an empty/near-empty result set for them
+            // instead of the platform-wide visibility every other admin
+            // surface (Lead, Dashboard) already grants super_admin. Fixed
+            // by giving super_admin an explicit, unscoped-by-default branch
+            // with an optional, validated ?client_id= to narrow to one
+            // tenant — never inferred from anything the client can forge
+            // without it existing in the clients table.
+            if ($request->filled('client_id')) {
+                $request->validate(['client_id' => 'integer|exists:clients,id']);
+                $targetClientId = $request->integer('client_id');
+                $query->whereHas('user', fn ($userQuery) =>
+                    $userQuery->where('client_id', $targetClientId)
+                );
+            }
+        } else {
+            // Unchanged for every other role: strictly the caller's own tenant.
+            $query->whereHas('user', fn ($userQuery) =>
                 $userQuery->where('client_id', $user->client_id)
             );
+        }
 
-        if ($this->isClientAdministrator($user)) {
+        if ($this->isClientAdministrator($user) || $isSuperAdmin) {
             if ($request->filled('user_id')) {
                 $query->where('user_id', $request->integer('user_id'));
             }
@@ -316,6 +339,6 @@ class CallLogController extends Controller
 
     private function isClientAdministrator($user): bool
     {
-        return in_array($user->role, ['admin', 'client_admin'], true);
+        return Roles::isTenantAdmin($user->role);
     }
 }
